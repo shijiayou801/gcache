@@ -120,38 +120,83 @@ bool CachedDevice::should_writeback(Bio *bio) const
     return disk_.get_gc_in_use() < threshold;
 }
 
-void CachedDevice::bch_wirteback_add(unsigned sectors)
+void CachedDevice::write_bdev_super()
 {
-    if (has_dirty_ == false) {
+
+}
+
+void CachedDevice::writeback_queue()
+{
+    wake_up_process(writeback_thread);
+}
+
+void CachedDevice::writeback_add()
+{
+    if (has_dirty) {
         return;
     }
 
-    has_dirty_ = true;
+    has_dirty = true;
 
-    if (
+    if (sb.state != BDEV_STATE_DIRTY) {
+        sb.state = BDEV_STATE_DIRTY;
+        write_bdev_super();
+    }
+
+    writeback_queue();
 }
 
-void CachedDevice::request_write(Bio *bio)
+void CachedDevice::write(CacheIoContext *ioc)
 {
     if (should_writeback(bio)) {
-       bch_writeback_add(bio->get_sectors()); 
-    } else {
+        ioc->bypass = false;
+        ioc->writeback = true;
+    }
 
+    if (ioc->bypass) {
+
+      // Send io to backing store
+      generic_make_request(ioc->bio);
+
+      return;
+    }
+
+    if (ioc->writeback) {
+        bch_writeback_add();
     }
 }
 
-class RequestQueue {
+void CachedDevice::read(CachedIoContext *ioc)
+{
+    
+}
 
+class RequestQueue {
 
     void cached_dev_make_request(Bio *bio);
 
 };
 
+struct CacheIoCtx {
+    bool bypass;
+    bool writeback;
+};
+
 void RequestQueue::cached_dev_make_request(Bio *bio)
 {
-    if (bio->has_data()) {
-        if (bio->is_write()) {
+    CachedDevice *cached_dev; // TODO:
+    CacheIoCtx *io_ctx = new CacheIoCtx(bio);
 
-        }
+    if (bio->has_data()) {
+        cached_dev->no_data(io_ctx);
+        return;
+    }
+
+    io_ctx->bypass = cached_dev->should_bypass(bio);
+
+    if (bio->is_write()) {
+        cached_dev->write(io_ctx);
+    } else {
+        cached_dev->read(io_ctx);
     }
 }
